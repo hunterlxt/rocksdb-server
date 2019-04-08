@@ -5,12 +5,12 @@ PLATFORM_CXXFLAGS= -std=c++11  -faligned-new -DHAVE_ALIGNED_NEW -DROCKSDB_PLATFO
 all: server client librocksdb
 
 server: server.cc
-	g++ server.cc -o run-server -std=c++11 lib/librocksdb.a -I. $(PLATFORM_LDFLAGS)
+	g++ server.cc -o run-server -std=c++11 -lrocksdb $(PLATFORM_LDFLAGS)
 
 client: client-example.cc
-	g++ client-example.cc -o run-client -std=c++11 lib/librocksdb.a -I. $(PLATFORM_LDFLAGS)
+	g++ client-example.cc -o run-client -std=c++11 -lrocksdb $(PLATFORM_LDFLAGS)
 
 clean:
 	rm -rf ./run-server ./run-client
 
-librocksdb: lib/librocksdb.a
+librocksdb: /usr/local/lib/librocksdb.a

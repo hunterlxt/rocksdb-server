@@ -3,13 +3,16 @@
 
 #include "rocksdb/db.h"
 #include <arpa/inet.h>
+#include <iostream>
 #include <netinet/in.h>
 #include <sys/socket.h>
 #include <unistd.h>
 
-#define REQ_SIZE 270
-#define BUF_SIZE 257
-#define LARGE_SIZE 67108864
+#define REQ_SIZE 265
+#define BUF_SIZE 260
+#define KEY_SIZE 8
+#define VAL_SIZE 256
+#define LARGE_VAL_SIZE 4194304
 
 /**
  * DBserver类是用来和远程数据库交互的句柄
@@ -19,9 +22,9 @@ class DBserver {
   private:
     int sockfd;
     struct sockaddr_in dest;
-    char req[REQ_SIZE];
-    char buf[BUF_SIZE];
-    char *largeBuf = (char *)malloc(LARGE_SIZE);
+    bool iswork = false;
+    char reqBuf[REQ_SIZE];
+    char inBuf[BUF_SIZE];
     enum Type { NUL, PUT, GET, DELETE, SCAN };
 
   public:
@@ -32,12 +35,10 @@ class DBserver {
         sockfd = socket(PF_INET, SOCK_STREAM, 0);
         if (sockfd < 0) {
             perror("sock error");
+            exit(-1);
         }
     }
-    ~DBserver() {
-        Close();
-        delete largeBuf;
-    }
+    ~DBserver() { Close(); }
 
     //建立连接到远程数据库
     bool Connect() {
@@ -45,113 +46,150 @@ class DBserver {
             perror("connect error");
             return false;
         }
-    }
-    //关闭远程数据库
-    bool Close() { close(sockfd); }
-
-    //四个操作接口
-    bool Put(const rocksdb::WriteOptions &options, const std::string &key,
-             const std::string &value);
-    bool Delete(const rocksdb::WriteOptions &options, const std::string &key);
-    bool Get(const rocksdb::ReadOptions &options, const std::string &key,
-             std::string *value);
-    bool Scan();
-
-  private:
-    void fillWriteReq(enum Type t, const rocksdb::WriteOptions &options,
-                      const std::string &key, const std::string *value) {
-        bzero(req, REQ_SIZE);
-        bzero(buf, BUF_SIZE);
-        req[0] = t;
-        memcpy(req + 1, (const void *)&options, 5);
-        memcpy(req + 6, key.data(), 8);
-        if (value != nullptr)
-            memcpy(req + 14, (*value).data(), 256);
-    }
-    void fillReadReq(enum Type t, const rocksdb::ReadOptions &options,
-                     const std::string &key) {
-        bzero(req, REQ_SIZE);
-        bzero(buf, BUF_SIZE);
-        req[0] = t;
-        memcpy(req + 1, (const void *)&options, 96);
-        memcpy(req + 97, key.data(), 8);
-    }
-    bool check(const std::string &key, const std::string *value) {
-        if (value != nullptr && value->length() != 256)
-            return false;
-        if (key.length() != 8)
-            return false;
+        iswork = true;
         return true;
     }
+    //关闭远程数据库
+    bool Close() {
+        iswork = false;
+        close(sockfd);
+    }
+
+    //四个操作接口
+    bool Put(const std::string &key, const std::string &value);
+    bool Delete(const std::string &key);
+    bool Get(const std::string &key, std::string *value);
+    bool Scan(const std::string &key1, const std::string &key2,
+              std::vector<std::pair<std::string, std::string>> &ret);
+
+  private:
+    void clearBuffer() {
+        bzero(reqBuf, REQ_SIZE);
+        bzero(inBuf, BUF_SIZE);
+    };
 };
 
 /**
- * 格式：操作类型+写入选项+KEY+VALUE (1+5+8+256=270 Bytes)
+ * 格式：操作类型+KEY+VALUE
  */
-bool DBserver::Put(const rocksdb::WriteOptions &options, const std::string &key,
-                   const std::string &value) {
-    if (!check(key, &value))
+bool DBserver::Put(const std::string &key, const std::string &value) {
+    if (key.length() != KEY_SIZE || value.length() != VAL_SIZE)
         return false;
-    fillWriteReq(PUT, options, key, &value);
-    write(sockfd, req, REQ_SIZE);
-    if (read(sockfd, buf, BUF_SIZE) == 0) {
-        perror("server is closed");
+    clearBuffer();
+    reqBuf[0] = PUT;
+    memcpy(reqBuf + 1, key.data(), KEY_SIZE);
+    memcpy(reqBuf + 1 + KEY_SIZE, value.data(), VAL_SIZE);
+    if (write(sockfd, reqBuf, REQ_SIZE) < REQ_SIZE) {
         Close();
         return false;
     }
-    if (buf[0] == '0')
+    ssize_t nums = read(sockfd, inBuf, 1);
+    if (nums < 1) {
+        perror("connection has error");
+        Close();
+        return false;
+    }
+    if (inBuf[0] == 'T')
         return true;
     else
         return false;
 }
 
 /**
- * 格式：操作类型+写入选项+KEY (1+5+8=14 Bytes)
+ * 格式：操作类型+KEY (1+8=9 Bytes)
  */
-bool DBserver::Delete(const rocksdb::WriteOptions &options,
-                      const std::string &key) {
-    if (!check(key, nullptr))
+bool DBserver::Delete(const std::string &key) {
+    if (key.length() != KEY_SIZE)
         return false;
-    fillWriteReq(DELETE, options, key, nullptr);
-    write(sockfd, req, REQ_SIZE);
-    if (read(sockfd, buf, BUF_SIZE) == 0) {
-        perror("server is closed");
+    clearBuffer();
+    reqBuf[0] = DELETE;
+    memcpy(reqBuf + 1, key.data(), KEY_SIZE);
+    if (write(sockfd, reqBuf, REQ_SIZE) < REQ_SIZE) {
         Close();
         return false;
     }
-    if (buf[0] == '0')
+    ssize_t nums = read(sockfd, inBuf, 1);
+    if (nums < 1) {
+        perror("connection has error");
+        Close();
+        return false;
+    }
+    if (inBuf[0] == 'T')
         return true;
     else
         return false;
 }
 
 /**
- * 格式：操作类型+读取选项+KEY (1+96+8=105 Bytes)
+ * 格式：操作类型+KEY (1+8=9 Bytes)
  */
-bool DBserver::Get(const rocksdb::ReadOptions &options, const std::string &key,
-                   std::string *value) {
-    if (!check(key, nullptr))
+bool DBserver::Get(const std::string &key, std::string *value) {
+    if (key.length() != KEY_SIZE)
         return false;
-    fillReadReq(GET, options, key);
-    write(sockfd, req, REQ_SIZE);
-    if (read(sockfd, buf, BUF_SIZE) == 0) {
-        perror("server is closed");
+    clearBuffer();
+    reqBuf[0] = GET;
+    memcpy(reqBuf + 1, key.data(), KEY_SIZE);
+    if (write(sockfd, reqBuf, REQ_SIZE) < REQ_SIZE) {
         Close();
-        (*value).clear();
         return false;
     }
-    if (buf[0] == '0') {
-        *value = buf + 1;
-        return ((*value).length() == 256);
+    ssize_t nums = read(sockfd, inBuf, 1 + VAL_SIZE);
+    if (nums < 1) {
+        perror("connection has error");
+        Close();
+        return false;
+    }
+    if (inBuf[0] == 'T') {
+        value->assign(inBuf, 1, VAL_SIZE);
+        return true;
     } else {
-        (*value).clear();
         return false;
     }
 }
 
 /**
- * 格式：操作类型+写入选项+KEY+VALUE (270 Bytes)
+ * 格式：操作类型+KEY+KEY (17 Bytes)
  */
-bool Scan() {}
+bool DBserver::Scan(const std::string &key1, const std::string &key2,
+                    std::vector<std::pair<std::string, std::string>> &ret) {
+    if (key1.length() != KEY_SIZE || key2.length() != KEY_SIZE)
+        return false;
+    clearBuffer();
+    reqBuf[0] = SCAN;
+    memcpy(reqBuf + 1, key1.data(), KEY_SIZE);
+    memcpy(reqBuf + 1 + KEY_SIZE, key2.data(), KEY_SIZE);
+    if (write(sockfd, reqBuf, REQ_SIZE) < REQ_SIZE) {
+        Close();
+        return false;
+    }
+    size_t num = 0;
+    ssize_t nums = read(sockfd, inBuf, 5);
+    if (nums < 1) {
+        perror("connection has error");
+        Close();
+        return false;
+    }
+    if (inBuf[0] == 'T') {
+        int size = *(int *)(inBuf + 1);
+        char *largeBuf = (char *)malloc(size * (VAL_SIZE + KEY_SIZE));
+        size_t index = 0;
+        int len = size * (VAL_SIZE + KEY_SIZE);
+        while (len > 0) {
+            ssize_t readnums =
+                read(sockfd, largeBuf + index, size * (VAL_SIZE + KEY_SIZE));
+            index += readnums;
+            len -= readnums;
+        }
+        for (int i = 0; i < size; ++i) {
+            std::string key(largeBuf + i * (KEY_SIZE + VAL_SIZE), KEY_SIZE);
+            std::string value(largeBuf + i * (KEY_SIZE + VAL_SIZE) + KEY_SIZE,
+                              VAL_SIZE);
+            ret.push_back(std::pair<std::string, std::string>(key, value));
+        }
+        delete largeBuf;
+        return true;
+    } else
+        return false;
+}
 
 #endif
