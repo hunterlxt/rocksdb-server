@@ -2,8 +2,10 @@
 #include <assert.h>
 #include <iostream>
 
-int main(int argc, char const *argv[]) {
-    if (argc != 3) {
+int main(int argc, char const *argv[])
+{
+    if (argc != 3)
+    {
         std::cout << "Usage: ./run-client [Database_IP] [Database_PORT]\n";
         return -1;
     }
@@ -19,41 +21,49 @@ int main(int argc, char const *argv[]) {
     bool flag = false;
     flag = db.Connect();
     assert(flag);
-    std::cout << "Connection succeeded!\n" << std::endl;
+    std::cout << "Connection successfully\n"
+              << std::endl;
 
     flag = db.Put(key, value);
     assert(flag);
-
+    clock_t start;
     value.clear();
+    start = clock();
     flag = db.Get(key, &value);
     assert(flag);
-    std::cout << "Get key:" << key << '\n'
-              << "Value:" << value << '\n'
+    std::cout << "Get key:" << key << " successfully"
+              << "\nMilli seconds:" << clock() - start << '\n'
               << std::endl;
 
     flag = db.Delete(key);
     assert(flag);
-    std::cout << "Deleted key:" << key << '\n' << std::endl;
+    std::cout << "Deleted key:" << key << "\nMilli seconds:" << clock() - start << '\n'
+              << std::endl;
 
     flag = db.Get(key, &value);
     assert(!flag);
-    std::cout << key << " is not found\n" << std::endl;
+    std::cout << "Key:" << key << " is not found"
+              << "\nMilli seconds:" << clock() - start << '\n'
+              << std::endl;
 
     char ckey[8];
-    for (size_t i = 10000000; i < 10005000; i++) {
+
+    start = clock();
+    for (size_t i = 10000000; i < 10010000; i++)
+    {
         sprintf(ckey, "%d", i);
         key.assign(ckey);
         flag = db.Put(key, value);
-        assert(flag);
     }
+    std::cout << "Put 10000 KV pairs successfully\nMilli seconds:" << clock() - start << '\n'
+              << std::endl;
     std::vector<std::pair<std::string, std::string>> pairs;
+    start = clock();
     flag = db.Scan("10000000", "20000000", pairs);
-    std::cout << pairs.size() << std::endl;
-    // for (auto pair : pairs) {
-    //     std::cout << pair.first << '\n' << pair.second << std::endl;
-    // }
+    std::cout << "Scan from 10000000 to 20000000 and return " << pairs.size() << " KV pairs\nMilli seconds:" << clock() - start << '\n'
+              << std::endl;
 
     db.Close();
-    std::cout << "\nTest finished!" << std::endl;
+    std::cout << "===== Test finished =====" << std::endl;
     return 0;
 }

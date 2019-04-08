@@ -1,18 +1,14 @@
-#ifndef _CLIENT_H_
-#define _CLIENT_H_
+#ifndef _SERVER_H_
+#define _SERVER_H_
 
+#include "config.h"
 #include "rocksdb/db.h"
 #include "uv.h"
 #include <assert.h>
-#include <iostream>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string>
-
-#define KEY_SIZE 8
-#define VAL_SIZE 256
-#define REQ_SIZE 265
-#define BUF_SIZE 257
+#include <vector>
 
 enum Type { NUL, PUT, GET, DELETE, SCAN };
 
@@ -23,7 +19,8 @@ struct Client {
     char outBuffer[BUF_SIZE];
 
     Client(uv_stream_t *s) : server(s) {}
-    ~Client() {}
+    Client(Client &) = delete;
+    Client &operator=(Client &) = delete;
 };
 
 bool operate_database(Client *client, const uv_buf_t *reqBuffer,
